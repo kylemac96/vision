@@ -6,33 +6,11 @@ import cv2
 import math
 import csv
 
-from visual_odometry import PinholeCamera, VisualOdometry
+from manager.VOManager import PinholeCamera, VisualOdometry
 
-FILE_PATH = '/home/bravo/Documents/blueprintCamVis/monoVisInertOd/VO/dataSet/mav0/cam1/data/'
-    
+IMG_FILE_PATH = '/home/bravo/Documents/blueprintCamVis/cameraPoseEstimation/dataSet/mav0/cam0/data/'
+FNM_FILE_PATH = '/home/bravo/Documents/blueprintCamVis/cameraPoseEstimation/dataSet/mav0/cam0/data.csv'
 
-
-
-def rename_images():
-#import os
-#import os.path
-#renames images for a dataset for easy import while maintaining the order
-	img_types = ['.png']
-	for dirpath, dirnames, fnames in os.walk(path):
-		imgs = [f for f in fnames if os.path.splitext(f)[1] in img_types]
-		imgs.sort()
-		for j, im in enumerate(imgs):
-			name, ext = os.path.splitext(im)
-			os.rename(os.path.join(dirpath, im), os.path.join(dirpath,'{}.{}'.format(j, ext)))
-
-def read_image():
-	images = []
-	img_mask = "/home/karan/datasets/mav0/cam1/data/*.png"
-	for fn in glob(img_mask):
-		img = cv2.imread(fn, -1)
-		if img is not None:
-			images.append(img)
-	return images
 
 def isRotationMatrix(R) :
 	#checks if the output rotation matrix from feature tracking is a valid rotation matrix or not
@@ -72,15 +50,14 @@ if __name__ == '__main__':
 
     traj = np.zeros((600,600,3), dtype=np.uint8)
     
-    myfilepath = '/home/bravo/Documents/blueprintCamVis/monoVisInertOd/VO/dataSet/mav0/cam0/data.csv'
-    with open(myfilepath, 'rb') as f:
+    with open(FNM_FILE_PATH, 'rb') as f:
         mycsv = csv.reader(f)
         for row in mycsv:
             img_id = row[1]
 
             if flag == True:
                 count += 1
-                img = cv2.imread(FILE_PATH + img_id, 0)
+                img = cv2.imread(IMG_FILE_PATH + img_id, 0)
                
 	        
             	if img is not None:
