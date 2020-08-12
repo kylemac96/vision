@@ -85,9 +85,7 @@ class VisualOdometry:
 		if(self.px_ref.shape[0] < kMinNumFeature):
 			self.px_cur = self.detector.detect(self.new_frame,None)
 			self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)
-		self.px_ref = self.px_cur
-		
-		
+		self.px_ref = self.px_cur	
 
 	def update(self, img, frame_id):
 		assert(img.ndim==2 and img.shape[0]==self.cam.height and img.shape[1]==self.cam.width), "Frame: provided image has not the same size as the camera model or image is not grayscale"

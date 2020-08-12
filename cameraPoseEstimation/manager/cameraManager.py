@@ -1,5 +1,6 @@
-# --------------------------------------------------------
-# This module manages the camera stream.
+# --------------------------------------------------------32
+# This module manages all funtions relevant to the  camera 
+# stream.
 #
 # The rtspCamera class contains all relevant methods and
 # attributes to manage the camera feed and all corresponding
@@ -43,8 +44,7 @@ class rtspCamera():
         self.height     = height
         self.edgeThresh = 100  
         
-        # Load calibration files
-        self.mtx = np.load('calibrationData/mtx.npy')
+        # Load calibration filescd .
         self.dist = np.load('calibrationData/dist.npy')
         
     def end(self):      
@@ -230,6 +230,9 @@ class rtspCamera():
         cam = PinholeCamera2(frame.shape[1], frame.shape[0], self.mtx, self.dist)
         vo  = VisualOdometry(cam)
         
+        # Intilise Kalman filter 
+        KF = self.initKalmanFilter()
+        
         # Init
         flag = False
         count = 1
@@ -265,12 +268,18 @@ class rtspCamera():
                 anlges = np.array([0,0,0])
 
                 if(count > 2):
-                	z, y, x = cur_t[0], cur_t[1], cur_t[2]
+                	x, y, z = cur_t[0], cur_t[1], cur_t[2]
                 	# get angles from rotation matrix
                 	angles = self.rotationMatrixToEulerAngles(cur_R)
                 	n = angles[0]*(180/np.pi)
                 	e = angles[1]*(180/np.pi)
                 	d = anlges[2]*(180/np.pi)
+                	
+                	measurement = np.array([x,y,z,n,e,d], np.float32)
+                	fm = self.updateKalmanFilter(KF, measurement)
+                	
+                	x, y, z, n, e, d = fm[0], fm[1],fm[2],fm[3],fm[4],fm[5]
+                	
                 	kp = vo.detector.detect(img,None)
                 	displayBuf = cv2.drawKeypoints(displayBuf, kp, displayBuf, color = (255,0,0))
                 else:
