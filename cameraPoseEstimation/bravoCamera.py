@@ -28,6 +28,7 @@ OPEN_CV      = 1
 CALIBRATE    = 2
 CAMERA_MENU  = 3
 CAL_MENU     = 4
+VO           = 5
 
 # Bye string
 s1 = '  ____               ______   _ _      _       _ \n'
@@ -61,6 +62,8 @@ def main():
                 state = CAMERA_MENU               
             elif idx == 3:
                 state = CAL_MENU
+            elif idx == 4:
+                state = VO
             else:
                 # Terminate program
                 sys.exit('Program terminated \n' + s1 + s2+ s3+ s4+ s5+ s6 +s7 +s8)
@@ -85,7 +88,7 @@ def main():
             if idx == 1:
                 state = CALIBRATE  
             elif idx == 2:
-                state = MAIN_MENU
+                state = MAIN_MENU # TODO
             elif idx == 3:
                 state = MAIN_MENU
 
@@ -109,6 +112,18 @@ def main():
             # Hand over to openCV
             cam.openWindow()
             cam.runCalibration()
+            cam.destroyOpenCV()
+            cam.end() # Release camera object?         
+
+            # Hand back to main menu
+            state = MAIN_MENU 
+        
+        elif state == VO:
+            # Create camera object and connect to camera
+            cam = manager.cameraManager.rtspCamera(rtsp_uri, IMAGE_WIDTH, IMAGE_HEIGHT)
+            
+            # Hand over to openCV
+            cam.runVO()
             cam.destroyOpenCV()
             cam.end() # Release camera object?         
 

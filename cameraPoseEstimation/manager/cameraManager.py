@@ -12,6 +12,10 @@
 import numpy as np
 import cv2
 import multiprocessing as mp
+import math
+
+# Import interal modules
+from VOManager import PinholeCamera2, VisualOdometry
 
 # Define the rtsp camera class. This object can be used for all 
 # image processing and connections
@@ -38,6 +42,10 @@ class rtspCamera():
         self.width      = width
         self.height     = height
         self.edgeThresh = 100  
+        
+        # Load calibration files
+        self.mtx = np.load('calibrationData/mtx.npy')
+        self.dist = np.load('calibrationData/dist.npy')
         
     def end(self):      
         self.parent_conn.send(self.REQ_CLOSE)               # Send closure request to process
@@ -82,14 +90,10 @@ class rtspCamera():
         return cv2.resize(frame,None,fx=percent,fy=percent) # Rescale frame to desired value  
     
     def processCameraFeed(self):
-        # Load calibration files
-        mtx = np.load('calibrationData/mtx.npy')
-        dist = np.load('calibrationData/dist.npy')
-
         # Compute mapping
         h,  w = self.get_frame().shape[:2]
-        newcameramtx, roi=cv2.getOptimalNewCameraMatrix(mtx,dist,(w,h),0,(w,h))
-        mapx,mapy = cv2.initUndistortRectifyMap(mtx,dist,None,newcameramtx,(w,h),5)
+        newcameramtx, roi=cv2.getOptimalNewCameraMatrix(self.mtx,self.dist,(w,h),0,(w,h))
+        mapx,mapy = cv2.initUndistortRectifyMap(self.mtx,self.dist,None,newcameramtx,(w,h),5)
         
         # Setup P3P algorithem
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
@@ -137,8 +141,8 @@ class rtspCamera():
                 if ret == True:
                     #corners2 = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
                     # Find the rotation and translation vectors.
-                    #rvecs, tvecs = cv2.solvePnPRansac(objp, corners2, mtx, dist)
-                    _, rvecs, tvecs = cv2.solvePnP(objp, corners, mtx, dist)
+                    #rvecs, tvecs = cv2.solvePnPRansac(objp, corners2, self.mtx, self.dist)
+                    _, rvecs, tvecs = cv2.solvePnP(objp, corners, self.mtx, self.dist)
                     
                     X = tvecs[0]*26
                     Y = tvecs[1]*26
@@ -148,31 +152,32 @@ class rtspCamera():
                     Phi = rvecs[1]*(180/np.pi)
                     Phe = rvecs[2]*(180/np.pi)
                     
+                    measurement = np.array([X,Y,Z,Theta,Phi,Phe], np.float32)
+                    filtered = self.updateKalmanFilter(KF, measurement)
+                    
                     count += 1
                     
-                    X_proj, Y_proj = self.isoProjection(X,Y,Z)
+                    X_proj, Y_proj = self.isoProjection(filtered[0],filtered[1],filtered[2])
                     draw_x_0, draw_y_0 = draw_x, draw_y 
                     draw_x, draw_y = (int(X_proj)//5+x0), (int(Y_proj)//5+y0)
                     if draw_x_0 != None:
                         #cv2.circle(traj, (draw_x,draw_y), 1, (count*255/4540,255-count*255/4540,0), 1)
                         cv2.line(traj, (draw_x_0, draw_y_0), (draw_x, draw_y), (255, 255, 0), thickness=2)
                     
-                    pose = "X: %.1f [mm] Y: %.1f [mm] Z: %.1f [mm]  Theta: %.1f [rad] Phi: %.1f [rad] Phe: %.1f [rad] "%(X,Y,Z,Theta,Phi,Phe)
+                    pose = "X: %.1f [mm] Y: %.1f [mm] Z: %.1f [mm]  Theta: %.1f [deg] Phi: %.1f [deg] Phe: %.1f [deg] "%(X,Y,Z,Theta,Phi,Phe)
                     cv2.putText(displayBuf, pose, (11,40), font, 1.0, (32,32,32), 4, cv2.LINE_AA)
                     cv2.putText(displayBuf, pose, (10,40), font, 1.0, (240,240,240), 1, cv2.LINE_AA)
                     
                     # project 3D points to image plane
-                    imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, mtx, dist)
+                    imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, self.mtx, self.dist)
                     displayBuf = self.draw(frame,corners,imgpts)
                     
-
+                
+                
                     
                 x_offset = 0
                 y_offset = 570
                 displayBuf[y_offset:y_offset+traj.shape[0], x_offset:x_offset+traj.shape[1]] = traj
-                    
-
-              
             
             if showHelp == True:
                 cv2.putText(displayBuf, helpText, (11,20), font, 1.0, (32,32,32), 4, cv2.LINE_AA)
@@ -196,6 +201,9 @@ class rtspCamera():
                 cv2.setWindowTitle(self.name,"Camera pose estimation")
                 showWindow = 3
                 
+                # Intilise Kalman filter 
+                KF = self.initKalmanFilter()
+                
                 # Setup trajectory tracking
                 traj = np.zeros((150,250,3), dtype=np.uint8)
                 count = 1      
@@ -216,6 +224,116 @@ class rtspCamera():
         Y_proj = Y - Z*np.sin(-(180-135)*(np.pi/180))
         return X_proj, Y_proj
     
+    def runVO(self):
+        print('Starting visual odometry ...')
+        frame = self.get_frame()
+        cam = PinholeCamera2(frame.shape[1], frame.shape[0], self.mtx, self.dist)
+        vo  = VisualOdometry(cam)
+        
+        # Init
+        flag = False
+        count = 1
+        font = cv2.FONT_HERSHEY_PLAIN
+        
+        # Define offsets
+        x0, y0 = 400, 50
+        
+        # Setup trajectory tracking
+        traj = np.zeros((300,600,3), dtype=np.uint8)      
+        line_thickness = 2
+        cv2.line(traj, (x0,y0), (100+x0, 0+y0), (255, 0, 0), thickness=line_thickness)
+        cv2.line(traj, (x0,y0), (0+x0, 100+y0), (0, 255, 0), thickness=line_thickness)
+        zX_proj, zY_proj = self.isoProjection(0,0,100)
+        cv2.line(traj, (x0,y0), (int(zX_proj)+x0, int(zY_proj)+y0), (0, 0, 255), thickness=line_thickness)
+        draw_x, draw_y = None, None  
+        
+        while(True):
+            if flag == True:
+                count += 1
+                frame = self.get_frame()
+                displayBuf = frame
+                gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)       # Apply colour filter (hsv)
+                img = cv2.GaussianBlur(gray,(7,7),1.5)              # Apply gussian blur
+                   
+	            
+                if img is not None:
+                	img_id = 0
+                	vo.update(img, img_id)
+                	
+                cur_t = vo.cur_t
+                cur_R = vo.cur_R
+                anlges = np.array([0,0,0])
+
+                if(count > 2):
+                	z, y, x = cur_t[0], cur_t[1], cur_t[2]
+                	# get angles from rotation matrix
+                	angles = self.rotationMatrixToEulerAngles(cur_R)
+                	n = angles[0]*(180/np.pi)
+                	e = angles[1]*(180/np.pi)
+                	d = anlges[2]*(180/np.pi)
+                	kp = vo.detector.detect(img,None)
+                	displayBuf = cv2.drawKeypoints(displayBuf, kp, displayBuf, color = (255,0,0))
+                else:
+                	x, y, z, n, e, d = 0., 0., 0., 0., 0., 0.
+
+                #x, y = 0., 0.
+                pose = "X: %.1f [??] Y: %.1f [??] Z: %.1f [??]  Theta: %.1f [deg] Phi: %.1f [deg] Phe: %.1f [deg] "%(x,y,z,n,e,d)
+                cv2.putText(displayBuf, pose, (11,20), font, 1.0, (32,32,32), 4, cv2.LINE_AA)
+                cv2.putText(displayBuf, pose, (10,20), font, 1.0, (240,240,240), 1, cv2.LINE_AA)
+                
+                X_proj, Y_proj = self.isoProjection(x,y,z)
+                draw_x_0, draw_y_0 = draw_x, draw_y 
+                draw_x, draw_y = (int(X_proj)+x0), (int(Y_proj)+y0)
+                if draw_x_0 != None:
+                    cv2.line(traj, (draw_x_0, draw_y_0), (draw_x, draw_y), (255, 255, 0), thickness=2)
+                    
+                x_offset = 0
+                y_offset = img.shape[0] - traj.shape[0]
+                displayBuf[y_offset:y_offset+traj.shape[0], x_offset:x_offset+traj.shape[1]] = traj
+                
+                
+                cv2.imshow('Camera view', displayBuf)
+
+                key = cv2.waitKey(1)
+                
+                if key == 27: # Check for ESC key
+                    cv2.destroyAllWindows()
+                    break;
+                
+                if cv2.getWindowProperty('Camera view', 0) < 0:             # Check to see if the user closed the window
+                    break;
+
+        
+            flag = True 
+        
+        
+    def isRotationMatrix(self, R) :
+	    #checks if the output rotation matrix from feature tracking is a valid rotation matrix or not
+        Rt = np.transpose(R)
+        shouldBeIdentity = np.dot(Rt, R)
+        I = np.identity(3, dtype = R.dtype)
+        n = np.linalg.norm(I - shouldBeIdentity)
+        return n < 1e-6
+
+    def rotationMatrixToEulerAngles(self, R) :
+     	#Calculates rotation matrix to euler angles 
+
+        assert(self.isRotationMatrix(R)) 
+        sy = math.sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
+         
+        singular = sy < 1e-6
+     
+        if  not singular :
+            x = math.atan2(R[2,1] , R[2,2])
+            y = math.atan2(-R[2,0], sy)
+            z = math.atan2(R[1,0], R[0,0])
+        else :
+            x = math.atan2(-R[1,2], R[1,1])
+            y = math.atan2(-R[2,0], sy)
+            z = 0
+     
+        return np.array([x, y, z])    
+        
     def runCalibration(self):
         print('\nWelcome to the camera calibration module.To use this module you will need a 7x6 checker board pattern.\n')
         print('The camera feed has now started. Place your checker board in front of the camera and press [2] to take 10 shots at various different angles.')
@@ -272,12 +390,67 @@ class rtspCamera():
             if len(objpoints) == 10:
                 print('Calibrating camera ...')
                 frame_size = (frame.shape[1], frame.shape[0])
-                ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, frame_size,None,None)
+                ret, self.mtx, self.dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, frame_size,None,None)
                 
-                np.save('calibrationData/mtx.npy', mtx)
-                np.save('calibrationData/dist.npy', dist)
+                np.save('calibrationData/mtx.npy', self.mtx)
+                np.save('calibrationData/dist.npy', self.dist)
                 break
-                
+    
+    def initKalmanFilter(self):
+        
+        nStates = 18
+        nMeasurements = 6
+        nInputs = 0
+        
+        dt = 1/20
+        dt2 = dt*dt
+        
+        kalman = cv2.KalmanFilter(nStates, nMeasurements) # create KF
+        
+        # Define dynamic model
+        kalman.transitionMatrix = np.array([[1, 0, 0, dt,  0,  0, dt2,   0,   0, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 1, 0,  0, dt,  0,   0, dt2,   0, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 1,  0,  0, dt,   0,   0, dt2, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  1,  0,  0,  dt,   0,   0, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  0,  1,  0,   0,  dt,   0, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  0,  0,  1,   0,   0,  dt, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   1,   0,   0, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   1,   0, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   1, 0, 0, 0,  0,  0,  0,   0,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 1, 0, 0, dt,  0,  0, dt2,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 1, 0,  0, dt,  0,   0, dt2,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 1,  0,  0, dt,   0,   0, dt2],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 0,  1,  0,  0,  dt,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 0,  0,  1,  0,   0,  dt,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 0,  0,  0,  1,   0,   0,  dt],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 0,  0,  0,  0,   1,   0,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 0,  0,  0,  0,   0,   1,   0],
+                                            [0, 0, 0,  0,  0,  0,   0,   0,   0, 0, 0, 0,  0,  0,  0,   0,   0,   1]], np.float32)
+
+        # Define measurement model
+        kalman.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                             [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                             [0, 0, 1, 0, 0, 0, 0, 0, 0 ,0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                             [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+                                             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+                                             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]], np.float32)
+
+        kalman.processNoiseCov = np.identity(nStates,np.float32)*1e-2
+        kalman.measurementNoiseCov = np.identity(nMeasurements,np.float32)*1e-1
+
+        return kalman
+
+    
+    def updateKalmanFilter(self, KF, measurement):
+
+        # First predict, to update the internal statePre variable
+        prediction = KF.predict()
+        
+        # The "correct" phase that is going to use the predicted value and our measurement
+        return KF.correct(measurement)
+        
+              
+             
     def calibrateCamera(self, frame):    
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001) # termination criteria
         gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY) # Make frame grayscale
@@ -302,7 +475,7 @@ class rtspCamera():
     def egdeDetection(self,frame):
         hsv   = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # Apply gray scale filter
         blur  = cv2.GaussianBlur(hsv,(7,7),1.5)         # Apply gussian blur (better edge detection)
-        edges = cv2.Canny(blur,0,self.edgeThresh)        # Apply edge detection on blured image 
+        edges = cv2.Canny(blur,0,self.edgeThresh)       # Apply edge detection on blured image 
         
         return hsv, blur, edges   
         

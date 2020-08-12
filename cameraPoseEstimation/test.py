@@ -39,16 +39,32 @@ def rotationMatrixToEulerAngles(R) :
  
     return np.array([x, y, z])
     
+def isoProjection(X,Y,Z):
+    X_proj = X - Z*np.cos(-(180-135)*(np.pi/180))
+    Y_proj = Y - Z*np.sin(-(180-135)*(np.pi/180))
+    return X_proj, Y_proj
+    
 
 if __name__ == '__main__':
     
     flag = False
     count = 1
    
-    cam = PinholeCamera(752.0, 480.0, 458.654, 457.296, 367.215, 248.375)
-    vo = VisualOdometry(cam)
-
-    traj = np.zeros((600,600,3), dtype=np.uint8)
+    #cam = PinholeCamera(752.0, 480.0, 458.654, 457.296, 367.215, 248.375)
+    cam = PinholeCamera(752.0, 480.0, 458.654, 457.296, 367.215, 248.375,-0.28340811, 0.07395907, 0.00019359, 1.76187114e-05)
+    vo  = VisualOdometry(cam)
+    
+    # Define offsets
+    x0, y0 = 300, 300
+    
+    # Setup trajectory tracking
+    traj = np.zeros((600,600,3), dtype=np.uint8)      
+    line_thickness = 2
+    cv2.line(traj, (x0,y0), (100+x0, 0+y0), (255, 0, 0), thickness=line_thickness)
+    cv2.line(traj, (x0,y0), (0+x0, 100+y0), (0, 255, 0), thickness=line_thickness)
+    zX_proj, zY_proj = isoProjection(0,0,100)
+    cv2.line(traj, (x0,y0), (int(zX_proj)+x0, int(zY_proj)+y0), (0, 0, 255), thickness=line_thickness)
+    draw_x, draw_y = None, None  
     
     with open(FNM_FILE_PATH, 'rb') as f:
         mycsv = csv.reader(f)
@@ -66,41 +82,46 @@ if __name__ == '__main__':
             	cur_t = vo.cur_t
             	cur_R = vo.cur_R
             	anlges = np.array([0,0,0])
-            	n=0.
-            	e=0.
-            	d=0.
-            	
+
             	if(count > 2):
             		x, y, z = cur_t[0], cur_t[1], cur_t[2]
-            		#get angles from rotation matrix
+            		# get angles from rotation matrix
             		angles = rotationMatrixToEulerAngles(cur_R)
             		n = angles[0]
             		e = angles[1]
             		d = anlges[2]
+            		kp = vo.detector.detect(img,None)
+            		img = cv2.drawKeypoints(img, kp, img, color = (255,0,0))
             	else:
-            		x, y, z = 0., 0., 0.
-            		
-            	draw_x, draw_y = int(z)+300, int(0)+300
-            	#true_x, true_y = int(vo.trueX)+300, int(vo.trueZ)+300
+            		x, y, z, n, e, d = 0., 0., 0., 0., 0., 0.
 
-            	cv2.circle(traj, (draw_x,draw_y), 1, (count*255/4540,255-count*255/4540,0), 1)
-            	#cv2.circle(traj, (true_x,true_y), 1, (0,0,255), 2)
-            	cv2.rectangle(traj, (10, 20), (600, 60), (0,0,0), -1)
-            	text = "Coordinates: x=%.1fm y=%.1fm z=%.1fm '\n' n=%.1f e=%.1f d=%.1f "%(x,y,z,n,e,d)
-            	cv2.putText(traj, text, (20,40), cv2.FONT_HERSHEY_PLAIN, 1, (255,255,255), 1, 8)
+            	#x = 0
+            	X_proj, Y_proj = isoProjection(x,y,z)
+                draw_x_0, draw_y_0 = draw_x, draw_y 
+                draw_x, draw_y = (int(X_proj)+x0), (int(Y_proj)+y0)
+                if draw_x_0 != None:
+                    cv2.line(traj, (draw_x_0, draw_y_0), (draw_x, draw_y), (255, 255, 0), thickness=2)
+
+#            	text = "Coordinates: x=%.1fm y=%.1fm z=%.1fm '\n' n=%.1f e=%.1f d=%.1f "%(x,y,z,n,e,d)
+#            	cv2.putText(traj, text, (20,40), cv2.FONT_HERSHEY_PLAIN, 1, (255,255,255), 1, 8)
 
             	cv2.imshow('Camera view', img)
             	cv2.imshow('Trajectory', traj)
                 cv2.waitKey(1)
+                
+                if cv2.getWindowProperty('Camera view', 0) < 0:             # Check to see if the user closed the window
+                    break;
+                
+                if cv2.getWindowProperty('Trajectory', 0) < 0:             # Check to see if the user closed the window
+                    break;
     
             flag = True 
-
-    cv2.imwrite('map.png', traj)
-
+            
 
 
 
-
+                    
+                    
 
 
 

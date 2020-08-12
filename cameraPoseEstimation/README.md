@@ -37,3 +37,4 @@ Some things that still need to be done:
 # Random links:
 https://jkjung-avt.github.io/tx2-camera-with-python/
 https://jkjung-avt.github.io/opencv3-on-tx2/
+https://github.com/luigifreda/pyslam

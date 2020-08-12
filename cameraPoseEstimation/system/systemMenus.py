@@ -18,13 +18,14 @@ def mainMenu():
     print('--------------------------------------------------------------------')
     print('\t Main menu')
     print('--------------------------------------------------------------------')
-    print(' [1] Show raw camera feed')
+    print(' [1] Camera feed, Edge detection, PnP pose estimation')
     print(' [2] Change camera parameters')
     print(' [3] Calibrate camera')
-    print(' [4] Exit program')
+    print(' [4] Visual odometry')
+    print(' [5] Exit program')
     val = input('\n Please input the number of your option: ')
     
-    while val < 1 or val > 4:
+    while val < 1 or val > 5:
         val = input('Invaild selection please try agian: ')
     
     os.system('clear')
