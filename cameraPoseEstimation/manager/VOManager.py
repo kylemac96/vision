@@ -4,11 +4,11 @@ import cv2
 STAGE_FIRST_FRAME = 0
 STAGE_SECOND_FRAME = 1
 STAGE_DEFAULT_FRAME = 2
-kMinNumFeature = 5000
+kMinNumFeature = 1500
 
-lk_params = dict(winSize  = (50, 50), 
-                 maxLevel = 2,
-             	 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+lk_params = dict(winSize  = (15, 15), 
+                 #maxLevel = 2,
+             	 criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.3))
 
 # Filter keypoints in accordance with status returned by calcOpticalFlowPyrLK
 def featureTracking(image_ref, image_cur, px_ref):
@@ -30,7 +30,6 @@ class PinholeCamera:
 		self.fy = fy
 		self.cx = cx
 		self.cy = cy
-		self.distortion = (abs(k1) > 0.0000001)
 		self.d = [k1, k2, p1, p2, k3]
 		
 class PinholeCamera2:
@@ -41,7 +40,6 @@ class PinholeCamera2:
 		self.fy = mtx[1][1]
 		self.cx = mtx[0][2]
 		self.cy = mtx[1][2]
-		self.distortion = (abs(dist[0][0]) > 0.0000001)
 		self.d = dist[0]
 
 class VisualOdometry:
@@ -56,11 +54,11 @@ class VisualOdometry:
 		self.px_cur = None
 		self.focal = cam.fx
 		self.pp = (cam.cx, cam.cy)
-		self.detector = cv2.FastFeatureDetector_create(threshold=25, nonmaxSuppression=True)
+		self.detector = cv2.FastFeatureDetector_create(threshold=10, nonmaxSuppression=True)
 
 	def getAbsoluteScale(self, frame_id):  
 		# Need to work out scale from IMU data? 
-		return 1
+		return 0.2
 
 	def processFirstFrame(self):
 		self.px_ref = self.detector.detect(self.new_frame,None)
@@ -69,19 +67,24 @@ class VisualOdometry:
 
 	def processSecondFrame(self):
 		self.px_ref, self.px_cur = featureTracking(self.last_frame, self.new_frame, self.px_ref)
-		E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=3.0)
-		_, self.cur_R, self.cur_t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp)
+		E, m = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=3.0)
+		_, self.cur_R, self.cur_t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp,mask = m)
 		self.frame_stage = STAGE_DEFAULT_FRAME 
 		self.px_ref = self.px_cur
 
 	def processFrame(self, frame_id):
 		self.px_ref, self.px_cur = featureTracking(self.last_frame, self.new_frame, self.px_ref)
-		E, mask = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=3.0)
-		_, R, t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp)
+		E, m = cv2.findEssentialMat(self.px_cur, self.px_ref, focal=self.focal, pp=self.pp, method=cv2.RANSAC, prob=0.999, threshold=3.0)
+		_, R, t, mask = cv2.recoverPose(E, self.px_cur, self.px_ref, focal=self.focal, pp = self.pp, mask = m)
 		absolute_scale = self.getAbsoluteScale(frame_id)
+
+#		angles,_,_,_,_,_ = cv2.RQDecomp3x3(self.cur_R)
+#		print(angles)
+		
 		if(absolute_scale > 0.1):
-			self.cur_t = self.cur_t + absolute_scale*self.cur_R.dot(t) 
+			self.cur_t += absolute_scale*self.cur_R.dot(t) 
 			self.cur_R = R.dot(self.cur_R)
+		
 		if(self.px_ref.shape[0] < kMinNumFeature):
 			self.px_cur = self.detector.detect(self.new_frame,None)
 			self.px_cur = np.array([x.pt for x in self.px_cur], dtype=np.float32)

@@ -44,7 +44,8 @@ class rtspCamera():
         self.height     = height
         self.edgeThresh = 100  
         
-        # Load calibration filescd .
+        # Load calibration files
+        self.mtx = np.load('calibrationData/mtx.npy')
         self.dist = np.load('calibrationData/dist.npy')
         
     def end(self):      
@@ -270,27 +271,28 @@ class rtspCamera():
                 if(count > 2):
                 	x, y, z = cur_t[0], cur_t[1], cur_t[2]
                 	# get angles from rotation matrix
-                	angles = self.rotationMatrixToEulerAngles(cur_R)
-                	n = angles[0]*(180/np.pi)
-                	e = angles[1]*(180/np.pi)
-                	d = anlges[2]*(180/np.pi)
+                	#angles = self.rotationMatrixToEulerAngles(cur_R)
+                	angles,_,_,_,_,_ = cv2.RQDecomp3x3(cur_R)
+                	#angles = cur_R
+                	n = angles[0]
+                	e = angles[1]
+                	d = angles[2]
                 	
                 	measurement = np.array([x,y,z,n,e,d], np.float32)
                 	fm = self.updateKalmanFilter(KF, measurement)
                 	
-                	x, y, z, n, e, d = fm[0], fm[1],fm[2],fm[3],fm[4],fm[5]
+                	x, y, z, n2, e2, d2 = fm[0], fm[1], fm[2], fm[3], fm[4], fm[5]
                 	
                 	kp = vo.detector.detect(img,None)
                 	displayBuf = cv2.drawKeypoints(displayBuf, kp, displayBuf, color = (255,0,0))
                 else:
                 	x, y, z, n, e, d = 0., 0., 0., 0., 0., 0.
 
-                #x, y = 0., 0.
                 pose = "X: %.1f [??] Y: %.1f [??] Z: %.1f [??]  Theta: %.1f [deg] Phi: %.1f [deg] Phe: %.1f [deg] "%(x,y,z,n,e,d)
                 cv2.putText(displayBuf, pose, (11,20), font, 1.0, (32,32,32), 4, cv2.LINE_AA)
                 cv2.putText(displayBuf, pose, (10,20), font, 1.0, (240,240,240), 1, cv2.LINE_AA)
                 
-                X_proj, Y_proj = self.isoProjection(x,y,z)
+                X_proj, Y_proj = self.isoProjection(x,-y,z)
                 draw_x_0, draw_y_0 = draw_x, draw_y 
                 draw_x, draw_y = (int(X_proj)+x0), (int(Y_proj)+y0)
                 if draw_x_0 != None:
@@ -343,6 +345,29 @@ class rtspCamera():
      
         return np.array([x, y, z])    
         
+    def rotationMatrixToEulerAngles2(self, R) :
+     	#Calculates rotation matrix to euler angles 
+
+        assert(self.isRotationMatrix(R)) 
+        
+        if (R[0,2] == 1) | (R[0,2] == -1):
+            e3 = 0
+            dlta = math.atan2(R[0,1] , R[0,2])
+            if R[0,2] == -1:
+                e2 = np.pi/2
+                e1 = e3 + dlta
+            else:
+                e2 = -pi/2
+                e1 = -e3 + dlta
+        
+        else: 
+            e2 = - math.asin(R[0,2]);
+            e1 = math.atan2(R[1,2]/math.cos(e2), R[2,2]/math.cos(e2));
+            e3 = math.atan2(R[0,1]/math.cos(e2), R[0,0]/math.cos(e2));  
+     
+        return np.array([e1, e2, e3])          
+        
+        
     def runCalibration(self):
         print('\nWelcome to the camera calibration module.To use this module you will need a 7x6 checker board pattern.\n')
         print('The camera feed has now started. Place your checker board in front of the camera and press [2] to take 10 shots at various different angles.')
@@ -357,8 +382,8 @@ class rtspCamera():
         imgpoints = [] # 2d points in image plane.
         
         # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
-        objp = np.zeros((7*7,3), np.float32)
-        objp[:,:2] = np.mgrid[0:7,0:7].T.reshape(-1,2)
+        objp = np.zeros((9*6,3), np.float32)
+        objp[:,:2] = np.mgrid[0:9,0:6].T.reshape(-1,2)
         
         while(True):
             if cv2.getWindowProperty(self.name, 0) < 0: # Check to see if the user closed the window
@@ -450,25 +475,27 @@ class rtspCamera():
         return kalman
 
     
-    def updateKalmanFilter(self, KF, measurement):
+    def updateKalmanFilter(self, KF, m):
+        # If not init, then init
+        if all(v == 0 for v in KF.statePost):
+            KF.statePost = np.array([m[0],m[1],m[2],0,0,0,0,0,0,m[3],m[4],m[5],0,0,0,0,0,0], np.float32)
 
         # First predict, to update the internal statePre variable
         prediction = KF.predict()
         
         # The "correct" phase that is going to use the predicted value and our measurement
-        return KF.correct(measurement)
-        
+        return KF.correct(m)
               
              
     def calibrateCamera(self, frame):    
         criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001) # termination criteria
         gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY) # Make frame grayscale
-        ret, corners = cv2.findChessboardCorners(gray, (7,7),None) # Find the chess board corners
+        ret, corners = cv2.findChessboardCorners(gray, (9,6),None) # Find the chess board corners
 
         # If corners are found
         if ret == True:    
             corners = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria) # Refine the corners using sup pixles
-            frame = cv2.drawChessboardCorners(frame, (7,7), corners,ret) # Draw corners on frame
+            frame = cv2.drawChessboardCorners(frame, (9,6), corners,ret) # Draw corners on frame
             
         return frame, ret, corners
 
